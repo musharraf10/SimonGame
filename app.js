@@ -95,15 +95,22 @@ async function playSequence(sequence) {
 
 /* Level up: push next color then play the full sequence once */
 async function levelUp() {
-  if (isPlayingSequence) return; // avoid re-entrance
   userSeq = [];
   level++;
   setLevel(level);
-  setStatus("Watch the sequence");
-  // append new color (no extra flash here — the full sequence will be played)
-  gameSeq.push(getRandomColor());
-  await playSequence(gameSeq); // plays entire sequence: old + new
-  setStatus("Your turn — repeat the sequence");
+  setStatus("Watch the new color");
+
+  // pick new color & add to sequence
+  const newColor = getRandomColor();
+  gameSeq.push(newColor);
+
+  // 🔹 Only blink the new color
+  acceptingInput = false;
+  await sleep(400);
+  await flashTileOnce(newColor, 300);
+  acceptingInput = true;
+
+  setStatus("Your turn — repeat full sequence");
 }
 
 /* Check answer as user enters input */
