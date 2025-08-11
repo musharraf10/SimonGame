@@ -1,8 +1,7 @@
+// Modern Simon game JS — Fixed: play each color only once per sequence playback
+const COLORS = ["red", "yellow", "green", "purple"]; // matches HTML ids
 
-const COLORS = ["yellow", "red", "purple", "green"]; // order doesn't matter
-const SFX_ENABLED = true; // set false to disable tones
-
-/* ------------- DOM ------------- */
+/* DOM */
 const allBtns = Array.from(document.querySelectorAll(".s-btn"));
 const startBtn = document.getElementById("startBtn");
 const levelBadge = document.getElementById("levelBadge");
@@ -12,29 +11,19 @@ const overlayMsg = document.getElementById("overlayMessage");
 const overlayLoader = document.getElementById("overlayLoader");
 const overlayBtn = document.getElementById("overlayBtn");
 
-/* ------------- STATE ------------- */
+/* STATE */
 let gameSeq = [];
 let userSeq = [];
-let started = false;
 let level = 0;
 let acceptingInput = false;
+let started = false;
+let isPlayingSequence = false;
 
-/* ------------- fix random index (use 4) ------------- */
-function getRandomColor() {
-  const idx = Math.floor(Math.random() * COLORS.length); // correct size
-  return COLORS[idx];
-}
-
-/* ------------- sound (simple WebAudio) ------------- */
+/* AUDIO (optional) */
 let audioCtx;
-const tones = {
-  red: 261.6, // C4
-  yellow: 329.6, // E4
-  green: 392.0, // G4
-  purple: 523.3 // C5
-};
-
-function playTone(color, duration = 220) {
+const tones = { red: 261.6, yellow: 329.6, green: 392.0, purple: 523.3 };
+const SFX_ENABLED = true;
+function playTone(color, dur = 220) {
   if (!SFX_ENABLED) return;
   try {
     audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
@@ -48,20 +37,15 @@ function playTone(color, duration = 220) {
     const now = audioCtx.currentTime;
     g.gain.linearRampToValueAtTime(0.09, now + 0.01);
     o.start(now);
-    g.gain.linearRampToValueAtTime(0.0001, now + duration / 1000);
-    o.stop(now + duration / 1000 + 0.02);
-  } catch (e) { /* ignore */ }
+    g.gain.linearRampToValueAtTime(0.0001, now + dur / 1000);
+    o.stop(now + dur / 1000 + 0.02);
+  } catch (e) {}
 }
 
-/* ------------- UI helpers ------------- */
-function setStatus(text) {
-  statusEl.textContent = text;
-}
-
-function setLevel(n) {
-  levelBadge.textContent = n > 0 ? `Level ${n}` : "Level —";
-}
-
+/* HELPERS */
+function sleep(ms) { return new Promise(res => setTimeout(res, ms)); }
+function setStatus(txt) { statusEl.textContent = txt; }
+function setLevel(n) { levelBadge.textContent = n > 0 ? `Level ${n}` : "Level —"; }
 function showOverlay(message, withLoader = false, showRestart = false) {
   overlayMsg.textContent = message;
   overlayLoader.classList.toggle("hidden", !withLoader);
@@ -70,76 +54,85 @@ function showOverlay(message, withLoader = false, showRestart = false) {
 }
 function hideOverlay() { overlay.classList.add("hidden"); }
 
-/* ------------- flash helpers ------------- */
-function addFlash(btnEl) {
-  btnEl.classList.add("flash");
-  playTone(btnEl.dataset.color);
-  setTimeout(() => btnEl.classList.remove("flash"), 280);
+/* UI flash helpers - single flash per call */
+function flashTileOnce(color, duration = 320) {
+  const btn = document.getElementById(color);
+  if (!btn) return;
+  btn.classList.add("flash");
+  playTone(color, duration);
+  return sleep(duration).then(() => btn.classList.remove("flash"));
 }
-function addUserFlash(btnEl) {
-  btnEl.classList.add("userFlash");
-  playTone(btnEl.dataset.color, 160);
-  setTimeout(() => btnEl.classList.remove("userFlash"), 200);
+function userPressFeedback(el) {
+  el.classList.add("userFlash");
+  setTimeout(() => el.classList.remove("userFlash"), 180);
 }
 
-/* ------------- sequence logic ------------- */
-function levelUp() {
+/* Random color */
+function getRandomColor() {
+  return COLORS[Math.floor(Math.random() * COLORS.length)];
+}
+
+/* Play a full sequence (each color blinks once, in order).
+   Locks input during playback. */
+async function playSequence(sequence) {
+  if (isPlayingSequence) return;
+  isPlayingSequence = true;
   acceptingInput = false;
+  // small pause before start so user can see change
+  await sleep(350);
+
+  for (let i = 0; i < sequence.length; i++) {
+    const color = sequence[i];
+    await flashTileOnce(color, 300);    // each tile flashes ONCE
+    // gap between flashes
+    await sleep(120);
+  }
+
+  // done playing sequence
+  isPlayingSequence = false;
+  acceptingInput = true;
+}
+
+/* Level up: push next color then play the full sequence once */
+async function levelUp() {
+  if (isPlayingSequence) return; // avoid re-entrance
   userSeq = [];
   level++;
   setLevel(level);
   setStatus("Watch the sequence");
-  // add random color
-  const next = getRandomColor();
-  gameSeq.push(next);
-  // play the sequence
-  playSequence(gameSeq).then(() => {
-    acceptingInput = true;
-    setStatus("Your turn — repeat the sequence");
-  });
+  // append new color (no extra flash here — the full sequence will be played)
+  gameSeq.push(getRandomColor());
+  await playSequence(gameSeq); // plays entire sequence: old + new
+  setStatus("Your turn — repeat the sequence");
 }
 
-async function playSequence(seq) {
-  // small pause before playing
-  await sleep(450);
-  for (let color of seq) {
-    const btnEl = document.getElementById(color);
-    addFlash(btnEl);
-    await sleep(420);
-  }
-  await sleep(160);
-}
-
-/* ------------- check answer ------------- */
+/* Check answer as user enters input */
 function checkAns(idx) {
   if (!acceptingInput) return;
   if (userSeq[idx] === gameSeq[idx]) {
+    // so far so good
     if (userSeq.length === gameSeq.length) {
+      // completed the sequence correctly — move to next level after short delay
       acceptingInput = false;
-      setStatus("Nice — next level");
+      setStatus("Nice! Next level...");
       setTimeout(() => {
-        // small get-ready overlay
         showOverlay("Get ready...", true, false);
         setTimeout(() => {
           hideOverlay();
           levelUp();
-        }, 900);
+        }, 800);
       }, 700);
     }
   } else {
-    gameOver();
+    // wrong — game over
+    acceptingInput = false;
+    setStatus("Wrong! Game over");
+    showOverlay(`Game Over! Your score: ${level}`, false, true);
+    overlayBtn.onclick = resetGame;
   }
 }
 
-/* ------------- game over & reset ------------- */
-function gameOver() {
-  acceptingInput = false;
-  setStatus("Game Over! Tap Restart");
-  showOverlay(`Game Over! Your score: ${level}`, false, true);
-  overlayBtn.onclick = resetGame;
-}
-
-/* ------------- reset ------------- */
+/* Reset game */
 function resetGame() {
   hideOverlay();
   started = false;
@@ -151,27 +144,26 @@ function resetGame() {
   acceptingInput = false;
 }
 
-/* ------------- utility sleep ------------- */
-function sleep(ms) {
-  return new Promise((res) => setTimeout(res, ms));
-}
-
-/* ------------- input handlers ------------- */
-function handleUserPress(e) {
-  if (!acceptingInput) return;
-  // support pointer events & clicks
-  const target = e.currentTarget;
-  addUserFlash(target);
-  const color = target.dataset.color;
+/* Input handler for tiles (pointerdown for mobile & desktop) */
+function handleTilePointerDown(e) {
+  const btn = e.currentTarget;
+  // if not accepting input, give small feedback but ignore sequence
+  if (!acceptingInput) {
+    userPressFeedback(btn);
+    return;
+  }
+  // real user press
+  userPressFeedback(btn);
+  const color = btn.dataset.color;
+  if (!color) return;
   userSeq.push(color);
   checkAns(userSeq.length - 1);
 }
 
-/* ------------- Start flow ------------- */
+/* Start button flow */
 startBtn.addEventListener("click", () => {
   if (started) return;
   started = true;
-  // show overlay loader then start
   showOverlay("Get Ready...", true, false);
   setTimeout(() => {
     hideOverlay();
@@ -179,43 +171,23 @@ startBtn.addEventListener("click", () => {
     gameSeq = [];
     setLevel(0);
     levelUp();
-  }, 900);
+  }, 850);
 });
 
-/* ------------- Attach events to all color buttons ------------- */
+/* attach handlers to tiles */
 allBtns.forEach(btn => {
-  // pointerdown covers mouse, touch & pen reliably
-  btn.addEventListener("pointerdown", (e) => {
-    // prevent accidental input while sequence is playing
-    if (!acceptingInput) {
-      // but still provide a small tactile feedback
-      btn.classList.add("userFlash");
-      setTimeout(()=>btn.classList.remove("userFlash"),120);
-      return;
-    }
-    handleUserPress.call(btn, e);
-  });
-  // keyboard support for accessibility (space/enter)
-  btn.setAttribute("tabindex","0");
+  btn.addEventListener("pointerdown", handleTilePointerDown);
+  // accessibility: keyboard support
+  btn.setAttribute("tabindex", "0");
   btn.addEventListener("keydown", (ev) => {
-    if (ev.key === "Enter" || ev.key === " ") {
-      ev.preventDefault();
-      btn.click();
-    }
+    if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); btn.click(); }
   });
 });
 
-/* ------------- expose overlay restart button too ------------- */
-overlayBtn.addEventListener("click", () => {
-  resetGame();
-});
+/* overlay restart button */
+overlayBtn.addEventListener("click", resetGame);
 
-/* ------------- init UI ------------- */
+/* init UI */
 setLevel(0);
 setStatus("Press Start to begin");
 hideOverlay();
-
-/* ------------- optional auto-play test (comment out in production) ------------- */
-/* // auto start for testing:
-setTimeout(() => startBtn.click(), 400);
-*/
