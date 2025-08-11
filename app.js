@@ -1,122 +1,221 @@
 
-// Simon Game
+const COLORS = ["yellow", "red", "purple", "green"]; // order doesn't matter
+const SFX_ENABLED = true; // set false to disable tones
 
-let gameSeq=[];
-let userSeq=[];
+/* ------------- DOM ------------- */
+const allBtns = Array.from(document.querySelectorAll(".s-btn"));
+const startBtn = document.getElementById("startBtn");
+const levelBadge = document.getElementById("levelBadge");
+const statusEl = document.getElementById("status");
+const overlay = document.getElementById("overlay");
+const overlayMsg = document.getElementById("overlayMessage");
+const overlayLoader = document.getElementById("overlayLoader");
+const overlayBtn = document.getElementById("overlayBtn");
 
-let btns = ["yellow","red","purple","green"];
-
+/* ------------- STATE ------------- */
+let gameSeq = [];
+let userSeq = [];
 let started = false;
-let level =0;
-let h2 = document.querySelector("h2");
+let level = 0;
+let acceptingInput = false;
 
-document.addEventListener("keypress", function(){
-    if(started == false){
-        console.log("started ");
-        started=true;
-        levelUp();
+/* ------------- fix random index (use 4) ------------- */
+function getRandomColor() {
+  const idx = Math.floor(Math.random() * COLORS.length); // correct size
+  return COLORS[idx];
+}
+
+/* ------------- sound (simple WebAudio) ------------- */
+let audioCtx;
+const tones = {
+  red: 261.6, // C4
+  yellow: 329.6, // E4
+  green: 392.0, // G4
+  purple: 523.3 // C5
+};
+
+function playTone(color, duration = 220) {
+  if (!SFX_ENABLED) return;
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = "sine";
+    o.frequency.value = tones[color] || 300;
+    o.connect(g);
+    g.connect(audioCtx.destination);
+    g.gain.value = 0.0001;
+    const now = audioCtx.currentTime;
+    g.gain.linearRampToValueAtTime(0.09, now + 0.01);
+    o.start(now);
+    g.gain.linearRampToValueAtTime(0.0001, now + duration / 1000);
+    o.stop(now + duration / 1000 + 0.02);
+  } catch (e) { /* ignore */ }
+}
+
+/* ------------- UI helpers ------------- */
+function setStatus(text) {
+  statusEl.textContent = text;
+}
+
+function setLevel(n) {
+  levelBadge.textContent = n > 0 ? `Level ${n}` : "Level —";
+}
+
+function showOverlay(message, withLoader = false, showRestart = false) {
+  overlayMsg.textContent = message;
+  overlayLoader.classList.toggle("hidden", !withLoader);
+  overlayBtn.classList.toggle("hidden", !showRestart);
+  overlay.classList.remove("hidden");
+}
+function hideOverlay() { overlay.classList.add("hidden"); }
+
+/* ------------- flash helpers ------------- */
+function addFlash(btnEl) {
+  btnEl.classList.add("flash");
+  playTone(btnEl.dataset.color);
+  setTimeout(() => btnEl.classList.remove("flash"), 280);
+}
+function addUserFlash(btnEl) {
+  btnEl.classList.add("userFlash");
+  playTone(btnEl.dataset.color, 160);
+  setTimeout(() => btnEl.classList.remove("userFlash"), 200);
+}
+
+/* ------------- sequence logic ------------- */
+function levelUp() {
+  acceptingInput = false;
+  userSeq = [];
+  level++;
+  setLevel(level);
+  setStatus("Watch the sequence");
+  // add random color
+  const next = getRandomColor();
+  gameSeq.push(next);
+  // play the sequence
+  playSequence(gameSeq).then(() => {
+    acceptingInput = true;
+    setStatus("Your turn — repeat the sequence");
+  });
+}
+
+async function playSequence(seq) {
+  // small pause before playing
+  await sleep(450);
+  for (let color of seq) {
+    const btnEl = document.getElementById(color);
+    addFlash(btnEl);
+    await sleep(420);
+  }
+  await sleep(160);
+}
+
+/* ------------- check answer ------------- */
+function checkAns(idx) {
+  if (!acceptingInput) return;
+  if (userSeq[idx] === gameSeq[idx]) {
+    if (userSeq.length === gameSeq.length) {
+      acceptingInput = false;
+      setStatus("Nice — next level");
+      setTimeout(() => {
+        // small get-ready overlay
+        showOverlay("Get ready...", true, false);
+        setTimeout(() => {
+          hideOverlay();
+          levelUp();
+        }, 900);
+      }, 700);
     }
+  } else {
+    gameOver();
+  }
+}
+
+/* ------------- game over & reset ------------- */
+function gameOver() {
+  acceptingInput = false;
+  setStatus("Game Over! Tap Restart");
+  showOverlay(`Game Over! Your score: ${level}`, false, true);
+  overlayBtn.onclick = resetGame;
+}
+
+/* ------------- reset ------------- */
+function resetGame() {
+  hideOverlay();
+  started = false;
+  gameSeq = [];
+  userSeq = [];
+  level = 0;
+  setLevel(0);
+  setStatus("Press Start to begin");
+  acceptingInput = false;
+}
+
+/* ------------- utility sleep ------------- */
+function sleep(ms) {
+  return new Promise((res) => setTimeout(res, ms));
+}
+
+/* ------------- input handlers ------------- */
+function handleUserPress(e) {
+  if (!acceptingInput) return;
+  // support pointer events & clicks
+  const target = e.currentTarget;
+  addUserFlash(target);
+  const color = target.dataset.color;
+  userSeq.push(color);
+  checkAns(userSeq.length - 1);
+}
+
+/* ------------- Start flow ------------- */
+startBtn.addEventListener("click", () => {
+  if (started) return;
+  started = true;
+  // show overlay loader then start
+  showOverlay("Get Ready...", true, false);
+  setTimeout(() => {
+    hideOverlay();
+    level = 0;
+    gameSeq = [];
+    setLevel(0);
+    levelUp();
+  }, 900);
 });
 
-function gameFlash(btn){
-    btn.classList.add("flash")
-    setTimeout(function(){
-        btn.classList.remove("flash");
-    },250);
-}
-
-function userFlash(btn){
-    btn.classList.add("userFlash")
-    setTimeout(function(){
-        btn.classList.remove("userFlash");
-    },250);
-}
-
-function levelUp(){
-    userSeq = [];
-    level++;
-    h2.innerText=`Level ${level}`;
-
-    let ranIdx = Math.floor(Math.random()*3);
-    let randColor = btns[ranIdx];
-    let randBtn = document.querySelector(`.${randColor}`);
-    // console.log(randBtn);
-    // console.log(randColor);
-    // console.log(ranIdx);
-    gameSeq.push(randColor);
-    gameFlash(randBtn);
-}
-
-function checkAns(idx){
-    // console.log("curr level : ", level); 
-    if(userSeq[idx] === gameSeq[idx]){
-       if(userSeq.length == gameSeq.length){
-        setTimeout(levelUp,1000);
-       }
-    }else{
-        h2.innerHTML = `Game Over! Your Score was <b>${level}</b> <br> Press any key to start`;
-        document.querySelector("body").style.backgroundColor = "red";
-        setTimeout(function(){
-            document.querySelector("body").style.backgroundColor = "white"; 
-        },500 )
-        reset();  
+/* ------------- Attach events to all color buttons ------------- */
+allBtns.forEach(btn => {
+  // pointerdown covers mouse, touch & pen reliably
+  btn.addEventListener("pointerdown", (e) => {
+    // prevent accidental input while sequence is playing
+    if (!acceptingInput) {
+      // but still provide a small tactile feedback
+      btn.classList.add("userFlash");
+      setTimeout(()=>btn.classList.remove("userFlash"),120);
+      return;
     }
-}
+    handleUserPress.call(btn, e);
+  });
+  // keyboard support for accessibility (space/enter)
+  btn.setAttribute("tabindex","0");
+  btn.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" || ev.key === " ") {
+      ev.preventDefault();
+      btn.click();
+    }
+  });
+});
 
-function btnPress(){
-    let btn = this;
-    userFlash(btn);
+/* ------------- expose overlay restart button too ------------- */
+overlayBtn.addEventListener("click", () => {
+  resetGame();
+});
 
-    userColor = btn.getAttribute("id");
-    userSeq.push(userColor);
-    checkAns(userSeq.length-1);
-}
+/* ------------- init UI ------------- */
+setLevel(0);
+setStatus("Press Start to begin");
+hideOverlay();
 
-let allBtns = document.querySelectorAll(".btn");
-for(btn of allBtns){
-    btn.addEventListener("click", btnPress);
-}
-
-function reset(){
-    started = false;
-    gameSeq = [];
-    userSeq = [];
-    level = 0;
-}
-
-
-
-function one(){
-    return 1;
-}
-function two(){
-    return one()+one();
-}
-function three(){
-    let ans = two()+one();
-    console.log(ans);
-}
-three();
-h1 = document.querySelector("h1");
- function changeColor(color , delay){
-   return new Promise((reslove , reject) =>{
-        setTimeout(() => {
-            h1.style.color = color;
-            reslove("color changed");
-        }, delay);
-    
-    });
-}
-   changeColor("red", 1000)
-   .then(()=>{
-    console.log("red color completed");
-    return changeColor("orange",1000);
-   })
-   .then(()=>{
-    console.log("orange changed ");
-   });
- changeColor("red",1000, ()=>{
-    changeColor("orange",1000, ()=>{
-        changeColor("green",1000);
-    });
- });
+/* ------------- optional auto-play test (comment out in production) ------------- */
+/* // auto start for testing:
+setTimeout(() => startBtn.click(), 400);
+*/
